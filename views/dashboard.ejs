@@ -9,6 +9,8 @@
         .glass { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
         .status-pulse { animation: pulse 2s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .progress-bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); width: 100%; position: relative; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(to right, #60a5fa, #34d399); transition: width 0.3s ease-in-out; width: 0%; }
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-4">
@@ -19,9 +21,30 @@
 
         <div class="flex justify-between items-center mb-8">
             <h1 class="text-2xl font-black bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">QUANTUM AUTO-UPLOAD</h1>
-            <span class="text-xs font-mono border border-emerald-500/50 text-emerald-400 px-3 py-1 rounded-full <%= state.isProcessing ? 'status-pulse' : '' %>">
+            <span id="systemStatus" class="text-xs font-mono border border-emerald-500/50 text-emerald-400 px-3 py-1 rounded-full <%= state.isProcessing ? 'status-pulse' : '' %>">
                 <%= state.isProcessing ? 'SİSTEM ÇALIŞIYOR' : 'UYKU MODU' %>
             </span>
+        </div>
+
+        <!-- PROGRESS DISPLAY (NEW) -->
+        <div id="progressSection" class="bg-blue-500/10 border border-blue-500/20 p-6 rounded-2xl mb-8 <%= state.isProcessing ? '' : 'hidden' %>">
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <p class="text-gray-400 text-[10px] uppercase font-bold mb-1">ŞU AN İŞLENİYOR</p>
+                    <h2 id="currentVideoTitle" class="text-lg font-bold text-white leading-tight">--</h2>
+                </div>
+                <div class="text-right">
+                    <p id="currentStatus" class="text-blue-400 text-[10px] uppercase font-bold mb-1">DÖNÜŞTÜRÜLÜYOR</p>
+                    <p id="currentPercent" class="text-2xl font-black text-white leading-none">0%</p>
+                </div>
+            </div>
+            <div class="progress-bar mb-3">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-gray-500 uppercase font-mono tracking-widest">
+                <span>İLERLEME</span>
+                <span id="timeMark">SÜRE: 00:00:00</span>
+            </div>
         </div>
 
         <div class="grid grid-cols-3 gap-4 mb-8">
@@ -45,12 +68,12 @@
                 <div>
                     <label class="block text-[10px] text-gray-400 uppercase mb-1 ml-1">Video Başlığı</label>
                     <input type="text" name="title" required placeholder="YouTube'da görünecek başlık"
-                           class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500/50 transition-all">
+                           class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white">
                 </div>
                 <div class="relative group">
                     <input type="file" name="video" class="hidden" id="fileInput" onchange="updateFileName(this)" required>
                     <label for="fileInput" class="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-white/10 rounded-2xl cursor-pointer hover:border-blue-500/50 hover:bg-blue-500/5 transition-all">
-                        <span id="fileNameDisplay" class="text-sm text-gray-400">Dosya Seçin</span>
+                        <span id="fileNameDisplay" class="text-sm text-gray-400 text-center">Dosya Seçin</span>
                         <span class="text-[10px] text-gray-600 mt-1">MP4, MOV, AVI</span>
                     </label>
                 </div>
@@ -83,6 +106,36 @@
             const fileName = input.files[0] ? input.files[0].name : "Dosya Seçin";
             document.getElementById('fileNameDisplay').textContent = fileName;
         }
+
+        // --- REAL TIME PROGRESS (SSE) ---
+        const eventSource = new EventSource('/progress');
+
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            const progressSection = document.getElementById('progressSection');
+            const systemStatus = document.getElementById('systemStatus');
+
+            if (data.status === "Hazır") {
+                progressSection.classList.add('hidden');
+                systemStatus.textContent = "UYKU MODU";
+                systemStatus.classList.remove('status-pulse');
+            } else {
+                progressSection.classList.remove('hidden');
+                systemStatus.textContent = "SİSTEM ÇALIŞIYOR";
+                systemStatus.classList.add('status-pulse');
+
+                document.getElementById('currentVideoTitle').textContent = data.videoTitle;
+                document.getElementById('currentStatus').textContent = data.status;
+                document.getElementById('currentPercent').textContent = data.percent + '%';
+                document.getElementById('progressFill').style.width = data.percent + '%';
+                document.getElementById('timeMark').textContent = 'SÜRE: ' + data.timemark;
+            }
+        };
+
+        eventSource.onerror = (err) => {
+            console.error("SSE Error:", err);
+            // eventSource.close();
+        };
     </script>
 </body>
 </html>

@@ -14,6 +14,17 @@ const { uploadToYouTube } = require('./youtube');
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
+// Global progress state
+let currentProgress = {
+    percent: 0,
+    timemark: "00:00:00",
+    status: "Hazır",
+    videoTitle: ""
+};
+
+// SSE clients
+let clients = [];
+
 // Ensure uploads directory exists
 if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
@@ -26,7 +37,7 @@ app.use(session({
     secret: process.env.SESSION_SECRET || 'secret-key',
     resave: false,
     saveUninitialized: true,
-    cookie: { secure: false } // Set to true if using HTTPS
+    cookie: { secure: false }
 }));
 
 // --- AUTHENTICATION CHECK ---
@@ -37,8 +48,30 @@ function isAuthenticated(req, res, next) {
     res.redirect('/login');
 }
 
-// --- ROUTES ---
+// --- SSE ENDPOINT ---
+app.get('/progress', isAuthenticated, (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
 
+    const clientId = Date.now();
+    const newClient = { id: clientId, res };
+    clients.push(newClient);
+
+    req.on('close', () => {
+        clients = clients.filter(c => c.id !== clientId);
+    });
+
+    // Send initial status
+    res.write(`data: ${JSON.stringify(currentProgress)}\n\n`);
+});
+
+function broadcastProgress() {
+    clients.forEach(c => c.res.write(`data: ${JSON.stringify(currentProgress)}\n\n`));
+}
+
+// --- ROUTES ---
 app.get('/login', (req, res) => {
     res.render('login', { error: null });
 });
@@ -83,29 +116,22 @@ app.post('/add-to-queue', isAuthenticated, upload.single('video'), (req, res) =>
 });
 
 // --- VIDEO PROCESSING ---
-
 async function processQueue() {
     let state = readState();
-    if (state.isProcessing) {
-        console.log("Zaten bir işlem devam ediyor.");
-        return;
-    }
+    if (state.isProcessing) return;
 
-    console.log("=== Gece Mesaisi Başladı: Videolar İşleniyor ===");
-
-    // Refresh processedToday check (done inside readState)
+    console.log("=== Gece Mesaisi Başladı ===");
     state = readState();
 
-    for (let i = 0; i < state.queue.length; i++) {
-        state = readState(); // Refresh state in each loop
-
+    while (state.queue.length > 0) {
         if (state.processedToday >= state.dailyLimit) {
-            console.log("Günlük limite ulaşıldı, kalanlar yarına devredildi.");
+            console.log("Günlük limite ulaşıldı.");
             break;
         }
 
-        const videoData = state.queue[0]; // Always take the first one
+        const videoData = state.queue[0];
         await processAndUpload(videoData);
+        state = readState(); // Refresh for next loop
     }
 }
 
@@ -114,19 +140,28 @@ async function processAndUpload(videoData) {
     state.isProcessing = true;
     writeState(state);
 
+    currentProgress.videoTitle = videoData.title;
+    currentProgress.status = "Dönüştürülüyor...";
+    broadcastProgress();
+
     const inputPath = videoData.path;
     const outputFilename = 'final_' + Date.now() + '_' + videoData.originalname;
     const outputPath = path.join(__dirname, 'uploads', outputFilename);
-
-    console.log(`İşleniyor: ${videoData.title}`);
 
     return new Promise((resolve, reject) => {
         ffmpeg(inputPath)
             .videoCodec('libx264')
             .size('1920x1080')
             .addOptions(['-crf 23', '-preset slow'])
+            .on('progress', (progress) => {
+                currentProgress.percent = Math.floor(progress.percent || 0);
+                currentProgress.timemark = progress.timemark;
+                broadcastProgress();
+            })
             .on('end', async () => {
-                console.log(`${videoData.title} başarıyla dönüştürüldü. YouTube'a yükleniyor...`);
+                currentProgress.status = "YouTube'a Yükleniyor...";
+                currentProgress.percent = 100;
+                broadcastProgress();
 
                 try {
                     await uploadToYouTube(outputPath, {
@@ -134,21 +169,21 @@ async function processAndUpload(videoData) {
                         description: `Uploaded via Quantum Auto-Upload`,
                     });
 
-                    // Cleanup
                     if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
                     if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
-                    // Update State
                     let newState = readState();
                     newState.processedToday++;
                     newState.queue = newState.queue.filter(v => v.path !== videoData.path);
                     newState.isProcessing = false;
                     writeState(newState);
 
-                    console.log(`${videoData.title} tamamlandı.`);
+                    currentProgress.status = "Hazır";
+                    currentProgress.percent = 0;
+                    currentProgress.videoTitle = "";
+                    broadcastProgress();
                     resolve();
                 } catch (err) {
-                    console.error("YouTube Yükleme Hatası:", err);
                     let newState = readState();
                     newState.isProcessing = false;
                     writeState(newState);
@@ -156,7 +191,6 @@ async function processAndUpload(videoData) {
                 }
             })
             .on('error', (err) => {
-                console.error("FFmpeg Hatası:", err);
                 let newState = readState();
                 newState.isProcessing = false;
                 writeState(newState);
@@ -166,18 +200,13 @@ async function processAndUpload(videoData) {
     });
 }
 
-// --- CRON JOB ---
 const uploadHour = process.env.UPLOAD_HOUR || "03";
 cron.schedule(`0 ${uploadHour} * * *`, () => {
-    processQueue().catch(err => console.error("Queue Processing Error:", err));
+    processQueue().catch(err => console.error(err));
 });
 
 // Start Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`
-    🚀 Quantum Auto-Upload Aktif!
-    📍 Arayüz: http://localhost:${PORT}
-    ⏰ İşlem Saati: Her gece ${uploadHour}:00
-    `);
+    console.log(`🚀 Quantum Auto-Upload Aktif! http://localhost:${PORT}`);
 });
