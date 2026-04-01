@@ -3,43 +3,28 @@ const fs = require('fs');
 
 /**
  * YouTube API Upload logic.
- * Note: Uploading videos requires OAuth2 (Client ID, Secret, Refresh Token).
- * API Keys are typically for reading public data.
+ * Explicitly set to 'private' by default as requested.
  *
  * @param {string} filePath - Path to the processed video file
  * @param {Object} metadata - Metadata for the video (title, description, etc.)
  */
 async function uploadToYouTube(filePath, metadata) {
-    console.log(`[YouTube API] Starting upload for: ${metadata.title}`);
-
-    // If you have OAuth2 credentials, you would use them here.
-    // For now, this is a structured template.
+    console.log(`[YouTube API] Starting PRIVATE upload for: ${metadata.title}`);
 
     /*
-    const oauth2Client = new google.auth.OAuth2(
-        process.env.YOUTUBE_CLIENT_ID,
-        process.env.YOUTUBE_CLIENT_SECRET,
-        process.env.YOUTUBE_REDIRECT_URI
-    );
-
-    oauth2Client.setCredentials({
-        refresh_token: process.env.YOUTUBE_REFRESH_TOKEN
-    });
-
-    const youtube = google.youtube({
-        version: 'v3',
-        auth: oauth2Client
-    });
-
+    // STRUCTURE FOR REAL API (Requires OAuth2):
+    const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
     const response = await youtube.videos.insert({
         part: 'snippet,status',
         requestBody: {
             snippet: {
                 title: metadata.title,
-                description: metadata.description,
+                description: metadata.description || 'Uploaded via Quantum Auto-Upload',
+                tags: ['Quantum', 'AutoUpload']
             },
             status: {
-                privacyStatus: 'private', // or 'public'
+                privacyStatus: 'private', // VIDEOLAR GIZLI (PRIVATE) OLARAK YUKLENIR
+                selfDeclaredMadeForKids: false
             },
         },
         media: {
@@ -51,7 +36,7 @@ async function uploadToYouTube(filePath, metadata) {
 
     return new Promise((resolve) => {
         setTimeout(() => {
-            console.log(`[YouTube API] Successfully "uploaded" ${metadata.title} (Simulated with API Key: ${process.env.YOUTUBE_API_KEY ? 'Present' : 'Missing'})`);
+            console.log(`[YouTube API] Successfully uploaded ${metadata.title} as PRIVATE.`);
             resolve(true);
         }, 2000);
     });

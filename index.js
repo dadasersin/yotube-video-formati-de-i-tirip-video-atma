@@ -166,7 +166,7 @@ async function processAndUpload(videoData) {
                 try {
                     await uploadToYouTube(outputPath, {
                         title: videoData.title,
-                        description: `Uploaded via Quantum Auto-Upload`,
+                        description: `Uploaded via Quantum Auto-Upload (PRIVATE)`,
                     });
 
                     if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
