@@ -20,14 +20,14 @@
         </div>
 
         <div class="flex justify-between items-center mb-8">
-            <h1 class="text-2xl font-black bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">QUANTUM AUTO-UPLOAD</h1>
-            <span id="systemStatus" class="text-xs font-mono border border-emerald-500/50 text-emerald-400 px-3 py-1 rounded-full <%= state.isProcessing ? 'status-pulse' : '' %>">
-                <%= state.isProcessing ? 'SİSTEM ÇALIŞIYOR' : 'UYKU MODU' %>
+            <h1 class="text-2xl font-black bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">QUANTUM SHIELD V3</h1>
+            <span id="systemStatus" class="text-xs font-mono border border-emerald-500/50 text-emerald-400 px-3 py-1 rounded-full <%= state.isBusy ? 'status-pulse' : '' %>">
+                <%= state.isBusy ? 'SİSTEM ÇALIŞIYOR' : 'UYKU MODU' %>
             </span>
         </div>
 
         <!-- PROGRESS DISPLAY (NEW) -->
-        <div id="progressSection" class="bg-blue-500/10 border border-blue-500/20 p-6 rounded-2xl mb-8 <%= state.isProcessing ? '' : 'hidden' %>">
+        <div id="progressSection" class="bg-blue-500/10 border border-blue-500/20 p-6 rounded-2xl mb-8 <%= state.isBusy ? '' : 'hidden' %>">
             <div class="flex justify-between items-center mb-4">
                 <div>
                     <p class="text-gray-400 text-[10px] uppercase font-bold mb-1">ŞU AN İŞLENİYOR</p>

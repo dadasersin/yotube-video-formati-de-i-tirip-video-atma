@@ -12,7 +12,8 @@ const { readState, writeState } = require('./storage');
 const { uploadToYouTube } = require('./youtube');
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+// Render/Linux environment should use /tmp/ for temporary storage
+const upload = multer({ dest: '/tmp/' });
 
 // Global progress state
 let currentProgress = {
@@ -25,11 +26,6 @@ let currentProgress = {
 // SSE clients
 let clients = [];
 
-// Ensure uploads directory exists
-if (!fs.existsSync('uploads')) {
-    fs.mkdirSync('uploads');
-}
-
 // --- MIDDLEWARE ---
 app.set('view engine', 'ejs');
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -40,30 +36,22 @@ app.use(session({
     cookie: { secure: false }
 }));
 
-// --- AUTHENTICATION CHECK ---
+// --- AUTHENTICATION ---
 function isAuthenticated(req, res, next) {
-    if (req.session.isLoggedIn) {
-        return next();
-    }
+    if (req.session.isLoggedIn) return next();
     res.redirect('/login');
 }
 
-// --- SSE ENDPOINT ---
+// --- SSE FOR PROGRESS ---
 app.get('/progress', isAuthenticated, (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
-
     const clientId = Date.now();
     const newClient = { id: clientId, res };
     clients.push(newClient);
-
-    req.on('close', () => {
-        clients = clients.filter(c => c.id !== clientId);
-    });
-
-    // Send initial status
+    req.on('close', () => clients = clients.filter(c => c.id !== clientId));
     res.write(`data: ${JSON.stringify(currentProgress)}\n\n`);
 });
 
@@ -72,20 +60,17 @@ function broadcastProgress() {
 }
 
 // --- ROUTES ---
-app.get('/login', (req, res) => {
-    res.render('login', { error: null });
-});
+app.get('/login', (req, res) => res.render('login', { error: null }));
 
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
     const adminUser = process.env.ADMIN_USERNAME || 'admin';
     const adminPass = process.env.ADMIN_PASSWORD || '123';
-
     if (username === adminUser && password === adminPass) {
         req.session.isLoggedIn = true;
         res.redirect('/');
     } else {
-        res.render('login', { error: 'Geçersiz kullanıcı adı veya şifre!' });
+        res.render('login', { error: 'Hatalı giriş!' });
     }
 });
 
@@ -111,62 +96,65 @@ app.post('/add-to-queue', isAuthenticated, upload.single('video'), (req, res) =>
         writeState(state);
         res.redirect('/');
     } else {
-        res.status(400).send("Dosya veya başlık eksik.");
+        res.status(400).send("Eksik bilgi!");
     }
 });
 
-// --- VIDEO PROCESSING ---
+// --- QUANTUM SHIELD PROCESSING ---
 async function processQueue() {
     let state = readState();
-    if (state.isProcessing) return;
+    if (state.isBusy) return;
 
-    console.log("=== Gece Mesaisi Başladı ===");
-    state = readState();
-
-    while (state.queue.length > 0) {
-        if (state.processedToday >= state.dailyLimit) {
-            console.log("Günlük limite ulaşıldı.");
-            break;
-        }
-
-        const videoData = state.queue[0];
-        await processAndUpload(videoData);
-        state = readState(); // Refresh for next loop
-    }
-}
-
-async function processAndUpload(videoData) {
-    let state = readState();
-    state.isProcessing = true;
+    state.isBusy = true;
     writeState(state);
 
-    currentProgress.videoTitle = videoData.title;
-    currentProgress.status = "Dönüştürülüyor...";
-    broadcastProgress();
+    while (state.queue.length > 0) {
+        if (state.processedToday >= state.dailyLimit) break;
+        const videoData = state.queue[0];
+        await applyShieldAndUpload(videoData);
+        state = readState();
+    }
 
+    state.isBusy = false;
+    writeState(state);
+}
+
+async function applyShieldAndUpload(videoData) {
     const inputPath = videoData.path;
-    const outputFilename = 'final_' + Date.now() + '_' + videoData.originalname;
-    const outputPath = path.join(__dirname, 'uploads', outputFilename);
+    const outputFilename = 'shielded_' + Date.now() + '.mp4';
+    const outputPath = path.join('/tmp/', outputFilename);
+
+    currentProgress.videoTitle = videoData.title;
+    currentProgress.status = "Kalkan Uygulanıyor (Anti-Copyright)...";
+    broadcastProgress();
 
     return new Promise((resolve, reject) => {
         ffmpeg(inputPath)
+            .videoFilters([
+                'hflip',                // Aynalama
+                'scale=1.1*iw:-1',      // %10 Zoom
+                'crop=iw/1.1:ih/1.1',   // Kırpma
+                'hue=s=1.2:b=0.1'       // Renk Manipülasyonu
+            ])
+            .audioFilters([
+                'asetrate=44100*1.03',  // Ses perdesi değişimi
+                'aresample=44100'
+            ])
             .videoCodec('libx264')
-            .size('1920x1080')
-            .addOptions(['-crf 23', '-preset slow'])
+            .addOptions(['-crf 24', '-preset superfast'])
             .on('progress', (progress) => {
                 currentProgress.percent = Math.floor(progress.percent || 0);
                 currentProgress.timemark = progress.timemark;
                 broadcastProgress();
             })
             .on('end', async () => {
-                currentProgress.status = "YouTube'a Yükleniyor...";
-                currentProgress.percent = 100;
+                currentProgress.status = "YouTube'a Yükleniyor (Gizli)...";
                 broadcastProgress();
 
                 try {
                     await uploadToYouTube(outputPath, {
                         title: videoData.title,
-                        description: `Uploaded via Quantum Auto-Upload (PRIVATE)`,
+                        description: `Quantum Shield V3 Protected Upload`,
                     });
 
                     if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
@@ -175,38 +163,26 @@ async function processAndUpload(videoData) {
                     let newState = readState();
                     newState.processedToday++;
                     newState.queue = newState.queue.filter(v => v.path !== videoData.path);
-                    newState.isProcessing = false;
                     writeState(newState);
 
                     currentProgress.status = "Hazır";
                     currentProgress.percent = 0;
-                    currentProgress.videoTitle = "";
                     broadcastProgress();
                     resolve();
                 } catch (err) {
-                    let newState = readState();
-                    newState.isProcessing = false;
-                    writeState(newState);
                     reject(err);
                 }
             })
-            .on('error', (err) => {
-                let newState = readState();
-                newState.isProcessing = false;
-                writeState(newState);
-                reject(err);
-            })
+            .on('error', (err) => reject(err))
             .save(outputPath);
     });
 }
 
+// --- CRON ---
 const uploadHour = process.env.UPLOAD_HOUR || "03";
 cron.schedule(`0 ${uploadHour} * * *`, () => {
     processQueue().catch(err => console.error(err));
 });
 
-// Start Server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Quantum Auto-Upload Aktif! http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`Quantum Shield Port ${PORT} Aktif.`));
